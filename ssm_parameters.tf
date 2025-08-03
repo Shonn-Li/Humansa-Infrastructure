@@ -49,27 +49,6 @@ resource "aws_ssm_parameter" "db_name" {
   }
 }
 
-# Redis connection parameters (with auth token)
-resource "aws_ssm_parameter" "redis_host" {
-  name  = "/${var.project_name}/${var.environment}/redis_host"
-  type  = "String"
-  value = aws_elasticache_replication_group.humansa_redis.primary_endpoint_address
-  
-  tags = {
-    Name = "${var.project_name}-${var.environment}-redis-host"
-  }
-}
-
-resource "aws_ssm_parameter" "redis_port" {
-  name  = "/${var.project_name}/${var.environment}/redis_port"
-  type  = "String"
-  value = "6379"
-  
-  tags = {
-    Name = "${var.project_name}-${var.environment}-redis-port"
-  }
-}
-
 # ALB and deployment parameters
 resource "aws_ssm_parameter" "alb_dns_name" {
   name  = "/${var.project_name}/${var.environment}/alb_dns_name"

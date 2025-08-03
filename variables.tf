@@ -65,16 +65,8 @@ variable "max_instances" {
   default     = 4
 }
 
-# Redis Configuration
-variable "redis_node_type" {
-  description = "ElastiCache Redis node type"
-  default     = "cache.t3.micro"
-}
-
-variable "redis_num_nodes" {
-  description = "Number of Redis nodes"
-  default     = 1
-}
+# Redis Configuration - REMOVED
+# Redis is not needed for stateless ML API server
 
 # Monitoring
 variable "alarm_email" {

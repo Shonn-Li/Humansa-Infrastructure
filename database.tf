@@ -5,7 +5,7 @@ resource "aws_db_instance" "humansa_postgres" {
   # Engine configuration
   engine               = "postgres"
   engine_version       = "16.3"
-  instance_class       = "db.t3.medium"
+  instance_class       = "db.t3.small"
   allocated_storage    = 20
   max_allocated_storage = 250
   storage_type         = "gp3"

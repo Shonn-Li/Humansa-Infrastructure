@@ -127,7 +127,7 @@ resource "aws_launch_template" "ml_server" {
 # Auto Scaling Group
 resource "aws_autoscaling_group" "ml_server" {
   name                = "${var.project_name}-${var.environment}-ml-asg"
-  vpc_zone_identifier = aws_subnet.private[*].id
+  vpc_zone_identifier = aws_subnet.public[*].id
   target_group_arns   = [aws_lb_target_group.humansa_tg.arn]
   health_check_type   = "ELB"
   health_check_grace_period = 300

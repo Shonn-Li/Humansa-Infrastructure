@@ -32,11 +32,10 @@ terraform apply -var-file="terraform.tfvars"
 
 ## Infrastructure Components
 
-- VPC with public/private subnets across 2 AZs
+- VPC with public subnets across 2 AZs (no NAT gateways)
 - Application Load Balancer with HTTPS
 - Auto Scaling Group (2-4 instances)
-- RDS PostgreSQL (Multi-AZ)
-- ElastiCache Redis cluster
+- RDS PostgreSQL (single AZ, db.t3.small)
 - Systems Manager Parameter Store for secrets
 - CloudWatch monitoring and alarms
 
@@ -47,16 +46,13 @@ terraform apply -var-file="terraform.tfvars"
 - Auto Scaling (up to 4 instances peak): ~$134/month max
 
 ### Database
-- RDS PostgreSQL (db.t3.medium @ $0.118/hr): ~$85/month
+- RDS PostgreSQL (db.t3.small @ $0.060/hr): ~$43/month
 - Storage (20GB gp3 + backups): ~$5/month
 
 ### Networking & Load Balancing
 - Application Load Balancer: ~$30/month
-- NAT Gateway (2x @ $0.059/hr): ~$85/month
 - Data Processing (ALB): ~$10/month (estimated)
-
-### Caching
-- ElastiCache Redis (1x cache.t3.micro): ~$15/month
+- No NAT gateways (using public subnets with security groups)
 
 ### Storage & Logs
 - S3 (ALB logs, backups): ~$5/month
@@ -70,9 +66,15 @@ terraform apply -var-file="terraform.tfvars"
 - CloudWatch Metrics & Alarms: ~$10/month
 
 ### **Total Estimated Costs**:
-- **Base Configuration (2 instances)**: ~$317/month
-- **Peak Load (4 instances)**: ~$384/month
+- **Base Configuration (2 instances)**: ~$175/month
+- **Peak Load (4 instances)**: ~$242/month
 - **Plus Data Transfer**: $50-100/month
+
+### Savings from Optimization:
+- Removed NAT Gateways: **$85/month saved**
+- Removed Redis (stateless API): **$15/month saved**
+- Downsized RDS to t3.small: **$42/month saved**
+- **Total Monthly Savings: $142/month**
 
 ### Cost Optimization Recommendations:
 1. Use Reserved Instances for base capacity (save ~30%)

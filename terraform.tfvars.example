@@ -30,10 +30,6 @@ min_instances     = 2
 desired_instances = 2
 max_instances     = 4
 
-# Redis Configuration
-redis_node_type = "cache.t3.micro"
-redis_num_nodes = 1
-
 # Monitoring
 alarm_email = "alerts@youwo.ai"
 
