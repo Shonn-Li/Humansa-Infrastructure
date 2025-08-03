@@ -1,0 +1,128 @@
+name: Deploy Humansa ML Server
+
+on:
+  repository_dispatch:
+    types: [deploy-humansa, restart-humansa, rollback-humansa, new-ml-instance-created]
+
+env:
+  AWS_REGION: ap-east-1
+  ECR_REPOSITORY: humansa-ml-server
+  ECS_SERVICE: humansa-ml-service
+  ECS_CLUSTER: humansa-cluster
+
+jobs:
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-get-login@v1
+    
+    - name: Build, tag, and push image to Amazon ECR
+      if: github.event.action == 'deploy-humansa'
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        
+        # Also tag as latest
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+    
+    - name: Deploy to EC2 instances
+      if: github.event.action == 'deploy-humansa' || github.event.action == 'new-ml-instance-created'
+      run: |
+        # Get instance IDs from Auto Scaling Group
+        ASG_NAME="humansa-production-ml-asg"
+        INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
+          --auto-scaling-group-names $ASG_NAME \
+          --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+          --output text)
+        
+        # Deploy to each instance
+        for INSTANCE_ID in $INSTANCE_IDS; do
+          echo "Deploying to instance: $INSTANCE_ID"
+          
+          # Send command to pull and run latest Docker image
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "docker pull ${{ steps.login-ecr.outputs.registry }}/humansa-ml-server:latest",
+              "docker stop humansa-ml || true",
+              "docker rm humansa-ml || true",
+              "docker run -d --name humansa-ml --restart unless-stopped -p 5000:5000 -v /var/log/humansa-ml:/app/logs -e AWS_REGION=ap-east-1 -e ENVIRONMENT=production -e PROJECT_NAME=humansa ${{ steps.login-ecr.outputs.registry }}/humansa-ml-server:latest"
+            ]' \
+            --output text
+        done
+    
+    - name: Restart services
+      if: github.event.action == 'restart-humansa'
+      run: |
+        ASG_NAME="humansa-production-ml-asg"
+        INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
+          --auto-scaling-group-names $ASG_NAME \
+          --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+          --output text)
+        
+        for INSTANCE_ID in $INSTANCE_IDS; do
+          echo "Restarting service on instance: $INSTANCE_ID"
+          
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["docker restart humansa-ml"]' \
+            --output text
+        done
+    
+    - name: Rollback deployment
+      if: github.event.action == 'rollback-humansa'
+      run: |
+        echo "Rollback functionality to be implemented"
+        # This would typically involve:
+        # 1. Getting the previous image tag from Parameter Store or tags
+        # 2. Deploying that image to all instances
+        # 3. Updating the 'latest' tag to point to the previous version
+    
+    - name: Wait for health checks
+      run: |
+        echo "Waiting for instances to become healthy..."
+        sleep 30
+        
+        # Check ALB target health
+        TARGET_GROUP_ARN=$(aws elbv2 describe-target-groups \
+          --names "humansa-production-tg" \
+          --query 'TargetGroups[0].TargetGroupArn' \
+          --output text)
+        
+        aws elbv2 describe-target-health \
+          --target-group-arn $TARGET_GROUP_ARN
+    
+    - name: Send notification
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: |
+          Humansa ML Server Deployment: ${{ job.status }}
+          Action: ${{ github.event.action }}
+          Triggered by: ${{ github.event.client_payload.triggered_by }}
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
