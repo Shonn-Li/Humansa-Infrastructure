@@ -44,7 +44,8 @@ resource "aws_iam_role_policy" "ml_server_policy" {
         Action = [
           "ssm:GetParameter",
           "ssm:GetParameters",
-          "ssm:GetParametersByPath"
+          "ssm:GetParametersByPath",
+          "ssm:PutParameter"
         ]
         Resource = "arn:aws:ssm:${var.aws_region}:*:parameter/${var.project_name}/${var.environment}/*"
       },
@@ -76,7 +77,7 @@ resource "aws_launch_template" "ml_server" {
   instance_type = var.instance_type
   key_name      = aws_key_pair.humansa_key.key_name
   
-  vpc_security_group_ids = [aws_security_group.ml_server.id]
+  vpc_security_group_ids = [var.security_group_id]
   
   iam_instance_profile {
     name = aws_iam_instance_profile.ml_server.name
@@ -85,7 +86,7 @@ resource "aws_launch_template" "ml_server" {
   block_device_mappings {
     device_name = "/dev/xvda"
     ebs {
-      volume_size           = 100
+      volume_size           = var.root_volume_size
       volume_type           = "gp3"
       iops                  = 3000
       throughput            = 125
@@ -127,8 +128,8 @@ resource "aws_launch_template" "ml_server" {
 # Auto Scaling Group
 resource "aws_autoscaling_group" "ml_server" {
   name                = "${var.project_name}-${var.environment}-ml-asg"
-  vpc_zone_identifier = aws_subnet.public[*].id
-  target_group_arns   = [aws_lb_target_group.humansa_tg.arn]
+  vpc_zone_identifier = var.subnet_ids
+  target_group_arns   = [var.target_group_arn]
   health_check_type   = "ELB"
   health_check_grace_period = 300
   
@@ -181,41 +182,6 @@ resource "aws_autoscaling_policy" "scale_down" {
   adjustment_type        = "ChangeInCapacity"
   scaling_adjustment     = -1
   cooldown              = 300
-}
-
-# CloudWatch Alarms for Auto Scaling
-resource "aws_cloudwatch_metric_alarm" "high_cpu" {
-  alarm_name          = "${var.project_name}-${var.environment}-high-cpu"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/EC2"
-  period              = "300"
-  statistic           = "Average"
-  threshold           = "75"
-  alarm_description   = "This metric monitors EC2 cpu utilization"
-  alarm_actions       = [aws_autoscaling_policy.scale_up.arn]
-  
-  dimensions = {
-    AutoScalingGroupName = aws_autoscaling_group.ml_server.name
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "low_cpu" {
-  alarm_name          = "${var.project_name}-${var.environment}-low-cpu"
-  comparison_operator = "LessThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/EC2"
-  period              = "300"
-  statistic           = "Average"
-  threshold           = "25"
-  alarm_description   = "This metric monitors EC2 cpu utilization"
-  alarm_actions       = [aws_autoscaling_policy.scale_down.arn]
-  
-  dimensions = {
-    AutoScalingGroupName = aws_autoscaling_group.ml_server.name
-  }
 }
 
 # Data source for AMI

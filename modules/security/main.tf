@@ -2,7 +2,7 @@
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-${var.environment}-alb-sg"
   description = "Security group for Application Load Balancer"
-  vpc_id      = aws_vpc.humansa_vpc.id
+  vpc_id      = var.vpc_id
   
   ingress {
     description = "HTTPS from anywhere"
@@ -37,22 +37,22 @@ resource "aws_security_group" "alb" {
 resource "aws_security_group" "ml_server" {
   name        = "${var.project_name}-${var.environment}-ml-server-sg"
   description = "Security group for ML servers"
-  vpc_id      = aws_vpc.humansa_vpc.id
+  vpc_id      = var.vpc_id
   
   ingress {
     description     = "HTTP from ALB"
-    from_port       = 5000
-    to_port         = 5000
+    from_port       = var.ml_server_port
+    to_port         = var.ml_server_port
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }
   
   ingress {
-    description = "SSH for management (restrict in production)"
+    description = "SSH for management"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # TODO: Restrict to your IP
+    cidr_blocks = var.ssh_allowed_cidrs
   }
   
   egress {
@@ -72,7 +72,7 @@ resource "aws_security_group" "ml_server" {
 resource "aws_security_group" "database" {
   name        = "${var.project_name}-${var.environment}-db-sg"
   description = "Security group for RDS PostgreSQL"
-  vpc_id      = aws_vpc.humansa_vpc.id
+  vpc_id      = var.vpc_id
   
   ingress {
     description     = "PostgreSQL from ML servers"
