@@ -125,16 +125,18 @@ The Humansa infrastructure is designed as a cost-optimized, scalable ML server s
 - Deployment scripts creation
 - Comprehensive documentation
 - OIDC role creation for Humansa (arn:aws:iam::992382528744:role/humansa-github-actions-role)
+- GitHub Actions workflow files (plan.yml, apply.yml)
 
-🔄 **In Progress**:
-- GitHub repository setup
-- GitHub Actions workflow creation
+🔄 **Ready for Deployment**:
+- GitHub repository creation
+- GitHub secrets configuration
+- First infrastructure deployment
 
-⏳ **Pending**:
-- Actual infrastructure deployment
+⏳ **Post-Deployment Tasks**:
 - SSL certificate configuration
-- Domain setup
-- Application deployment
+- Domain setup (api.humansa.ai)
+- Application deployment (ML server)
+- SSM parameters for application secrets
 
 ### Key Differences from YouWoAI
 
@@ -143,6 +145,7 @@ The Humansa infrastructure is designed as a cost-optimized, scalable ML server s
 3. **Smaller RDS**: Right-sized for workload
 4. **Hong Kong Region**: Optimized for China access
 5. **Separate AWS Account**: Complete isolation
+6. **SSH Key via Secrets**: More flexible than file-based approach
 
 ### Files Tree Structure
 ```

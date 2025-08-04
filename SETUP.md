@@ -86,7 +86,24 @@ aws iam list-open-id-connect-providers
 
 **Attached Policies**: AdministratorAccess
 
-### Step 4: Create GitHub Repository
+### Step 4: Generate SSH Key Pair for EC2 Access
+
+**Why**: Allows secure SSH access to EC2 instances for debugging and management.
+
+```bash
+# Generate SSH key pair
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/humansa-infrastructure -C "humansa-infrastructure"
+
+# Display the public key (you'll need this for GitHub secrets)
+cat ~/.ssh/humansa-infrastructure.pub
+```
+
+**Important**: 
+- Keep the private key (`~/.ssh/humansa-infrastructure`) secure
+- You'll add the public key to GitHub secrets
+- This matches YouWoAI's approach (they store `youwoai-key.pub` in their repo)
+
+### Step 5: Create GitHub Repository
 
 **Why**: Version control and automated deployment trigger.
 
@@ -104,7 +121,7 @@ git remote add origin git@github.com:YOUR_USERNAME/humansa-infrastructure.git
 git push -u origin main
 ```
 
-### Step 5: Configure GitHub Secrets
+### Step 6: Configure GitHub Secrets
 
 **Why**: Securely store configuration for GitHub Actions.
 
@@ -116,10 +133,16 @@ Go to GitHub repository settings > Secrets and variables > Actions, then add:
 4. **DB_PASSWORD**: `[your-secure-database-password]`
 5. **ROUTE53_ZONE_ID**: `[your-route53-zone-id-for-youwo.ai]`
 6. **GHCR_PAT**: `[your-github-personal-access-token]`
+7. **SSH_PUBLIC_KEY**: `[paste-entire-public-key-from-step-4]`
 
-**Note**: These secrets match YouWoAI's pattern. The Terraform backend configuration (S3 bucket, DynamoDB table) is handled in the Terraform files, not GitHub secrets.
+**Example SSH_PUBLIC_KEY format**:
+```
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC... humansa-infrastructure
+```
 
-### Step 6: Create GitHub Actions Workflows
+**Note**: Paste the ENTIRE content from `cat ~/.ssh/humansa-infrastructure.pub` including the ssh-rsa prefix and comment suffix.
+
+### Step 7: Create GitHub Actions Workflows
 
 **Why**: Automated deployment pipeline.
 
@@ -232,29 +255,32 @@ jobs:
         run: terraform apply -auto-approve terraform.tfplan
 ```
 
-### Step 7: Create SSM Parameters for Application Secrets
+### Step 8: SSM Parameters (Application-Specific)
 
-**Why**: Secure storage of application credentials that EC2 instances can access.
+**IMPORTANT**: SSM Parameters are NOT created by Terraform infrastructure deployment. They are for application secrets only.
+
+**What Terraform Creates**:
+- Infrastructure resources (VPC, EC2, RDS, ALB, etc.)
+- IAM roles for EC2 instances to read SSM parameters
+- Security groups and networking
+
+**What You Create Manually AFTER Infrastructure**:
+Application secrets that the ML server Docker container needs:
 
 ```bash
-# Database password
+# Example: If your ML server needs API keys
 aws ssm put-parameter \
-  --name "/humansa/production/database/password" \
-  --value "YOUR_SECURE_PASSWORD" \
+  --name "/humansa/production/ml/anthropic_key" \
+  --value "YOUR_KEY" \
   --type "SecureString" \
   --region ap-east-1
 
-# API tokens
-aws ssm put-parameter \
-  --name "/humansa/production/api/openai_key" \
-  --value "YOUR_OPENAI_KEY" \
-  --type "SecureString" \
-  --region ap-east-1
-
-# Add other application secrets as needed
+# The ML server deployment scripts will read these from SSM
 ```
 
-### Step 8: Configure Terraform Variables
+**Note**: The infrastructure deployment only needs the Terraform variables (DB_USERNAME, DB_PASSWORD, etc.) which are passed through GitHub Secrets. Application-specific secrets like API keys are handled separately by the application deployment process.
+
+### Step 9: Configure Terraform Variables
 
 **Why**: Environment-specific configuration.
 
@@ -281,30 +307,43 @@ max_size = 4
 domain_name = "api.humansa.ai"
 ```
 
-### Step 9: Deploy Infrastructure
+### Step 10: Deploy Infrastructure
 
-**Why**: Create all AWS resources.
+**Why**: Create all AWS resources using the tag-based workflow.
 
 ```bash
-# Create PR to trigger plan
-git checkout -b initial-deployment
+# 1. Initialize repository and push code
+cd /Users/shonnli/Non-icloudFile/YouWoAI/Code_V1/humansa-infrastructure
+git init
 git add .
-git commit -m "Initial infrastructure configuration"
-git push origin initial-deployment
+git commit -m "Initial infrastructure setup"
+git branch -M main
+git remote add origin git@github.com:Shonn-Li/humansa-infrastructure.git
+git push -u origin main
 
-# Create PR on GitHub - this triggers terraform plan
-# Review the plan output in PR comments
+# 2. Create a plan (this triggers GitHub Actions)
+git tag plan-v1.0.0
+git push origin plan-v1.0.0
 
-# After approval, merge PR and create deploy tag
-git checkout main
-git pull origin main
-git tag deploy-v1.0.0
-git push origin deploy-v1.0.0
+# 3. Check GitHub Actions tab for the plan
+# Go to: https://github.com/Shonn-Li/humansa-infrastructure/actions
+# Review the Terraform plan output
 
-# This triggers terraform apply automatically
+# 4. If plan looks good, apply it
+git tag apply-v1.0.0
+git push origin apply-v1.0.0
+
+# 5. Monitor deployment in GitHub Actions
+# Infrastructure creation takes ~15-20 minutes
 ```
 
-### Step 10: Post-Deployment Configuration
+**Deployment Flow**:
+1. `plan-*` tag → Runs terraform plan → Saves to S3
+2. Review plan output in GitHub Actions logs
+3. `apply-*` tag → Downloads plan from S3 → Applies it
+4. Infrastructure is created in AWS
+
+### Step 11: Post-Deployment Configuration
 
 **Why**: Final setup steps after infrastructure is created.
 

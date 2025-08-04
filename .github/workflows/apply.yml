@@ -1,0 +1,63 @@
+name: "Terraform Apply"
+
+on:
+  push:
+    tags:
+      - "apply-*"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_LOG: "INFO"
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: environments/production
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: GitHub-OIDC-TERRAFORM
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.8.1"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Extract version number
+        id: get_version
+        run: echo "version=$(echo ${{ github.ref }} | sed -e 's|refs/tags/apply-||')" >> $GITHUB_ENV
+
+      - name: Download Terraform Plan from S3
+        run: |
+          aws s3 cp s3://humansa-terraform-state/plans/plan-${{ env.version }}.tfplan terraform.tfplan
+          echo "Downloaded plan from S3: plan-${{ env.version }}.tfplan"
+
+      - name: Show plan summary
+        run: |
+          echo "Applying Terraform plan version: ${{ env.version }}"
+          terraform show -no-color terraform.tfplan | head -50
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve terraform.tfplan
+
+      - name: Upload outputs
+        run: |
+          terraform output -json > outputs.json
+          aws s3 cp outputs.json s3://humansa-terraform-state/outputs/apply-${{ env.version }}-outputs.json
+          echo "::notice::Outputs saved to S3 as apply-${{ env.version }}-outputs.json"
