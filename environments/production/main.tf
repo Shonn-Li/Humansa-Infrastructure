@@ -13,13 +13,13 @@ terraform {
     }
   }
   
-  # Configure S3 backend for state management
+  # Configure S3 backend for state management (following YouWoAI pattern)
   backend "s3" {
     bucket         = "humansa-terraform-state"
-    key            = "production/terraform.tfstate"
+    key            = "state/terraform.tfstate"
     region         = "ap-east-1"
     encrypt        = true
-    dynamodb_table = "humansa-terraform-locks"
+    dynamodb_table = "humansa-terraform-state-locking"
   }
 }
 
