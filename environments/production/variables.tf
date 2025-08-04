@@ -132,6 +132,7 @@ variable "api_tokens" {
   description = "List of API tokens for authentication"
   type        = list(string)
   sensitive   = true
+  default     = []
 }
 
 # Instance Configuration
@@ -169,6 +170,7 @@ variable "root_volume_size" {
 variable "alarm_email" {
   description = "Email for CloudWatch alarms"
   type        = string
+  default     = "alerts@youwo.ai"
 }
 
 # GitHub Configuration
