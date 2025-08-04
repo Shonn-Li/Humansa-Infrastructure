@@ -117,26 +117,29 @@ curl -H "Authorization: Bearer YOUR_API_TOKEN" https://humansa.youwo.ai/health
 
 ## 💰 Cost Optimization
 
-This infrastructure has been optimized to save **$142/month** compared to the original design:
+This infrastructure has been optimized to save **$135.64/month** (44.7% reduction) compared to the original design:
 
 ### Optimizations Applied
-- ✅ **Removed NAT Gateways** - $85/month saved
+- ✅ **Removed NAT Gateways** - $85.87/month saved
   - Uses public subnets with security groups (following YouWoAI pattern)
-- ✅ **Removed Redis Cache** - $15/month saved
+- ✅ **Removed Redis Cache** - $36/month saved
   - Stateless ML API doesn't need caching layer
-- ✅ **Downsized RDS** - $42/month saved
+- ✅ **Rightsized RDS** - $13.77/month saved
   - db.t3.small sufficient for 300-400 concurrent requests
 
 ### Monthly Costs (Hong Kong Region)
 ```
 Production Environment:
-├── EC2 Instances (2x t3.medium): ~$67/month
-├── RDS PostgreSQL (db.t3.small): ~$43/month
-├── Application Load Balancer: ~$30/month
-├── Storage & Logs: ~$15/month
-├── CloudWatch & Monitoring: ~$10/month
-├── Data Transfer: ~$10/month
-└── Total: ~$175/month base, ~$242/month peak
+├── EC2 Instances (2x t3.medium): $76.03
+├── RDS PostgreSQL (db.t3.small): $27.75
+├── Application Load Balancer: $24.86
+├── Storage & Snapshots: $21.90
+├── Data Transfer: $12.00
+├── CloudWatch & Monitoring: $5.00
+└── Total: $167.54/month ($5.58/day)
+
+Original Design: $303.18/month ($10.11/day)
+Savings: $135.64/month ($1,627.68/year)
 ```
 
 ## 🛡️ Security Features
@@ -198,7 +201,7 @@ Currently deployed in **ap-east-1 (Hong Kong)** for optimal China performance.
 - **[Setup Guide](docs/SETUP_GUIDE.md)** - Detailed deployment instructions
 - **[Security Documentation](docs/SECRETS_DOCUMENTATION.md)** - Secret management
 - **[Deployment Guide](docs/deployment.md)** - CI/CD and operations
-- **[Cost Analysis](docs/CURRENT_INFRASTRUCTURE_EVALUATION.md)** - Detailed cost breakdown
+- **[Cost Analysis](docs/COST_ANALYSIS_OPTIMIZED.md)** - Detailed cost breakdown
 
 ## 🤝 Contributing
 
