@@ -51,7 +51,7 @@ jobs:
       - name: Show plan summary
         run: |
           echo "Applying Terraform plan version: ${{ env.version }}"
-          terraform show -no-color terraform.tfplan | head -50
+          terraform show -no-color terraform.tfplan 2>&1 | head -50 || true
 
       - name: Terraform Apply
         run: terraform apply -auto-approve terraform.tfplan
