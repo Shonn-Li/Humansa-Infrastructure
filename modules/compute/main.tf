@@ -162,6 +162,18 @@ resource "aws_autoscaling_group" "ml_server" {
     propagate_at_launch = true
   }
   
+  tag {
+    key                 = "Project"
+    value               = var.project_name
+    propagate_at_launch = true
+  }
+  
+  tag {
+    key                 = "Type"
+    value               = "ml-server"
+    propagate_at_launch = true
+  }
+  
   lifecycle {
     create_before_destroy = true
   }

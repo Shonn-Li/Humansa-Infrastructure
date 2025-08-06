@@ -1,0 +1,25 @@
+plugin: amazon.aws.aws_ec2
+regions:
+  - ap-east-1
+
+# Find instances by Auto Scaling Group tag
+keyed_groups:
+  - key: tags['aws:autoscaling:groupName']
+    prefix: asg
+    separator: '_'
+
+# Filter for our ML servers
+filters:
+  instance-state-name: running
+  tag:Project: humansa
+  tag:Environment: production
+  tag:Type: ml-server
+
+# Use public IP for connection (adjust if using private subnet)
+hostnames:
+  - public-ip-address
+  - private-ip-address
+
+# Compose variables for each host
+compose:
+  ansible_host: public_ip_address

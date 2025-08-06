@@ -130,7 +130,10 @@ Go to GitHub repository settings > Secrets and variables > Actions, then add:
 1. **AWS_ROLE**: `arn:aws:iam::992382528744:role/humansa-github-actions-role`
 2. **AWS_REGION**: `ap-east-1`
 3. **DB_USERNAME**: `humansa_admin`
-4. **DB_PASSWORD**: `[your-secure-database-password]`
+4. **DB_PASSWORD**: `[your-secure-database-password]` 
+   - **IMPORTANT**: Only use printable ASCII characters
+   - **CANNOT contain**: '/', '@', '"', or spaces
+   - **Example**: Use something like `HumansaDB2024$ecure!`
 5. **ROUTE53_ZONE_ID**: `[your-route53-zone-id-for-youwo.ai]`
 6. **GHCR_PAT**: `[your-github-personal-access-token]`
 7. **SSH_PUBLIC_KEY**: `[paste-entire-public-key-from-step-4]`

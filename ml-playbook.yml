@@ -1,0 +1,240 @@
+- name: PREPARE HUMANSA ML BOX (once per host)
+  hosts: "asg_humansa_production_ml_asg"
+  become: yes
+  gather_facts: no
+  any_errors_fatal: yes
+  ignore_unreachable: yes
+
+  vars:
+    env_dir: /etc/humansa-ml-server
+    private_key_file: "{{ ansible_ssh_private_key_file }}"
+    env_file: /etc/humansa-ml-server/.env
+    region: "{{ aws_region }}"
+    ssm_prefix: "/humansa/production/"
+
+  tasks:
+    # Basic runtime setup
+    - name: Ensure python3 & pip3
+      ansible.builtin.yum:
+        name:
+          - python3
+          - python3-pip
+        state: present
+
+    - name: Install AWS CLI
+      ansible.builtin.pip:
+        name: "awscli"
+        state: present
+
+    - name: Verify AWS CLI installation
+      ansible.builtin.command: aws --version
+      register: aws_version
+      changed_when: false
+
+    - name: Ensure docker engine
+      ansible.builtin.yum:
+        name: docker
+        state: present
+
+    - name: Enable & start docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    # Build .env file from SSM parameters
+    - name: Lookup parameter tree
+      set_fact:
+        ssm_values: "{{ lookup('amazon.aws.ssm_parameter', ssm_prefix, recursive=true, bypath=true, decrypt=true, region=region) }}"
+
+    - name: Ensure env directory
+      ansible.builtin.file:
+        path: "{{ env_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render .env for ML server
+      ansible.builtin.copy:
+        dest: "{{ env_file }}"
+        mode: "0600"
+        content: |
+          # From SSM Parameters
+          {% for key, value in ssm_values.items() %}
+          {{ key.split('/')[-1].upper() }}={{ value }}
+          {% endfor %}
+          
+          # From GitHub Secrets (passed via Ansible)
+          OPENAI_API_KEY={{ openai_api_key }}
+          ANTHROPIC_API_KEY={{ anthropic_api_key }}
+          AWS_ACCESS_KEY={{ aws_access_key }}
+          AWS_SECRET_ACCESS_KEY={{ aws_secret_access_key }}
+          AWS_REGION={{ aws_region }}
+          
+          # Optional API Keys
+          {% if deepseek_api_key is defined %}
+          DEEPSEEK_API_KEY={{ deepseek_api_key }}
+          {% endif %}
+          {% if google_api_key is defined %}
+          GOOGLE_API_KEY={{ google_api_key }}
+          {% endif %}
+          {% if xai_api_key is defined %}
+          XAI_API_KEY={{ xai_api_key }}
+          {% endif %}
+          {% if azure_inference_endpoint is defined %}
+          AZURE_INFERENCE_ENDPOINT={{ azure_inference_endpoint }}
+          {% endif %}
+          {% if azure_inference_credential is defined %}
+          AZURE_INFERENCE_CREDENTIAL={{ azure_inference_credential }}
+          {% endif %}
+          {% if webshare_proxy_username is defined %}
+          WEBSHARE_PROXY_USERNAME={{ webshare_proxy_username }}
+          {% endif %}
+          {% if webshare_proxy_password is defined %}
+          WEBSHARE_PROXY_PASSWORD={{ webshare_proxy_password }}
+          {% endif %}
+          {% if mem0_api_key is defined %}
+          MEM0_API_KEY={{ mem0_api_key }}
+          {% endif %}
+          
+          # Server Configuration
+          ML_SERVER_PORT=6001
+          ENVIRONMENT=production
+          DB_ACTIVE_DATABASE=humansa
+
+# Rolling update - 1 host at a time
+- name: ROLLING UPDATE HUMANSA ML SERVER
+  hosts: "asg_humansa_production_ml_asg"
+  serial: 1
+  become: yes
+  gather_facts: yes
+  any_errors_fatal: yes
+  ignore_unreachable: yes
+
+  vars:
+    region: "{{ aws_region }}"
+    tg_arn: "{{ ssm_values['/humansa/production/ml_tg_arn'] }}"
+    image: "ghcr.io/{{ ghcr_repository }}:{{ image_tag }}"
+    env_file: /etc/humansa-ml-server/.env
+
+  tasks:
+    # Check ALB registration
+    - name: Check if instance is registered with TG
+      ansible.builtin.shell: |
+        aws elbv2 describe-target-health \
+          --target-group-arn '{{ tg_arn }}' \
+          --region '{{ region }}' \
+          --output json
+      register: registration_check
+      failed_when: false
+      changed_when: false
+
+    - name: Find this instance in target group
+      set_fact:
+        instance_health: "{{ (data.TargetHealthDescriptions | selectattr('Target.Id', 'equalto', inventory_hostname) | list | first) | default({}) }}"
+      vars:
+        data: '{{ registration_check.stdout | default(''{"TargetHealthDescriptions":[]}'') | from_json }}'
+      when: registration_check.rc == 0 and registration_check.stdout | length > 0
+
+    - name: Determine if this is the first deployment
+      set_fact:
+        is_first_deployment: >-
+          {{ 
+            registration_check.rc != 0 or 
+            (registration_check.stdout | default('{"TargetHealthDescriptions":[]}') | from_json).TargetHealthDescriptions | selectattr('Target.Id', 'equalto', inventory_hostname) | list | length == 0 or
+            (instance_health == {} or 
+            instance_health.get('TargetHealth', {}).get('State') != 'healthy' and 
+            instance_health.get('TargetHealth', {}).get('State') != 'unhealthy')
+          }}
+
+    # Drain from ALB
+    - name: Deregister instance from TG
+      ansible.builtin.shell: |
+        aws elbv2 deregister-targets \
+          --target-group-arn '{{ tg_arn }}' \
+          --targets Id='{{ inventory_hostname }}' \
+          --region '{{ region }}'
+      when: not is_first_deployment | bool
+      changed_when: true
+
+    # Wait for draining
+    - name: Wait for draining to complete
+      ansible.builtin.pause:
+        seconds: 30
+      when: not is_first_deployment | bool
+
+    # Docker operations
+    - name: Docker login ghcr.io
+      ansible.builtin.shell: |
+        echo "{{ ghcr_token }}" | docker login ghcr.io -u "{{ ghcr_username }}" --password-stdin
+      register: login_output
+      failed_when: "'Login Succeeded' not in login_output.stdout"
+
+    - name: Pull image
+      ansible.builtin.command: docker pull {{ image }}
+      changed_when: true
+
+    # Stop old container
+    - name: Check if old container exists
+      ansible.builtin.command: docker ps -a -q -f name=humansa-ml
+      register: old_container
+      changed_when: false
+
+    - name: Stop old container
+      ansible.builtin.command: docker stop humansa-ml
+      when: old_container.stdout != ""
+      ignore_errors: yes
+
+    - name: Remove old container
+      ansible.builtin.command: docker rm humansa-ml
+      when: old_container.stdout != ""
+      ignore_errors: yes
+
+    # Start new container
+    - name: Run new container
+      ansible.builtin.shell: |
+        docker run -d \
+          --name humansa-ml \
+          --restart unless-stopped \
+          -p 6001:6001 \
+          -v /var/log/humansa-ml:/app/logs \
+          --env-file {{ env_file }} \
+          {{ image }}
+      changed_when: true
+
+    # Health check
+    - name: Wait for container to be healthy
+      ansible.builtin.uri:
+        url: "http://localhost:6001/health"
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: 30
+      delay: 10
+
+    # Re-register with ALB
+    - name: Register instance with TG
+      ansible.builtin.shell: |
+        aws elbv2 register-targets \
+          --target-group-arn '{{ tg_arn }}' \
+          --targets Id='{{ inventory_hostname }}' \
+          --region '{{ region }}'
+      changed_when: true
+
+    # Wait for healthy
+    - name: Wait for target to become healthy
+      ansible.builtin.shell: |
+        aws elbv2 describe-target-health \
+          --target-group-arn '{{ tg_arn }}' \
+          --targets Id='{{ inventory_hostname }}' \
+          --region '{{ region }}' \
+          --query 'TargetHealthDescriptions[0].TargetHealth.State' \
+          --output text
+      register: target_health
+      until: target_health.stdout == 'healthy'
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Log deployment success
+      ansible.builtin.debug:
+        msg: "Successfully deployed {{ image }} to {{ inventory_hostname }}"
