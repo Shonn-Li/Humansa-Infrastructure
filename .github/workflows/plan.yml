@@ -56,7 +56,13 @@ jobs:
         run: echo "version=$(echo ${{ github.ref }} | sed -e 's|refs/tags/plan-||')" >> $GITHUB_ENV
 
       - name: Terraform Plan
-        run: terraform plan -out=terraform.tfplan
+        run: |
+          if [[ "${{ github.ref }}" == *"cost-optimization"* ]]; then
+            echo "Using ultra-cost-optimized configuration"
+            terraform plan -var-file="ultra-cost-optimized.tfvars" -out=terraform.tfplan
+          else
+            terraform plan -out=terraform.tfplan
+          fi
 
       - name: Upload Terraform Plan to S3
         run: |
