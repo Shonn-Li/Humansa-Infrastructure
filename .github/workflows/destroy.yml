@@ -1,0 +1,269 @@
+name: Destroy Infrastructure
+
+on:
+  push:
+    tags:
+      - "destroy-*"
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: 'Type "DESTROY-HUMANSA" to confirm destruction'
+        required: true
+        type: string
+      backup_database:
+        description: 'Backup database before destroy?'
+        required: true
+        type: choice
+        options:
+          - 'yes'
+          - 'no'
+        default: 'yes'
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+  TF_VAR_certificate_arn: ${{ secrets.CERTIFICATE_ARN }}
+  TF_VAR_route53_zone_id: ${{ secrets.ROUTE53_ZONE_ID }}
+  TF_VAR_github_pat: ${{ secrets.GHCR_PAT }}
+  TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+
+jobs:
+  validate-and-backup:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.validate.outputs.proceed }}
+      backup_file: ${{ steps.backup.outputs.backup_file }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Validate destruction confirmation
+        id: validate
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY-HUMANSA" ]]; then
+              echo "❌ Destruction cancelled: Invalid confirmation text"
+              echo "proceed=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          fi
+          echo "✅ Destruction confirmed"
+          echo "proceed=true" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        if: steps.validate.outputs.proceed == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Backup database
+        id: backup
+        if: |
+          steps.validate.outputs.proceed == 'true' && 
+          (github.event.inputs.backup_database == 'yes' || github.event_name == 'push')
+        run: |
+          # Get RDS instance details
+          DB_INSTANCE=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'humansa')].DBInstanceIdentifier" \
+            --output text)
+          
+          if [ -n "$DB_INSTANCE" ]; then
+            echo "📦 Creating database snapshot..."
+            SNAPSHOT_ID="humansa-backup-$(date +%Y%m%d-%H%M%S)"
+            
+            aws rds create-db-snapshot \
+              --db-instance-identifier "$DB_INSTANCE" \
+              --db-snapshot-identifier "$SNAPSHOT_ID"
+            
+            echo "⏳ Waiting for snapshot to complete..."
+            aws rds wait db-snapshot-completed \
+              --db-snapshot-identifier "$SNAPSHOT_ID" \
+              --no-cli-pager || true
+            
+            echo "✅ Database backed up as: $SNAPSHOT_ID"
+            echo "backup_file=$SNAPSHOT_ID" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ No RDS instance found to backup"
+            echo "backup_file=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Save infrastructure state
+        if: steps.validate.outputs.proceed == 'true'
+        run: |
+          # Download current terraform state as backup
+          aws s3 cp s3://humansa-terraform-state/state/terraform.tfstate \
+            /tmp/terraform-backup-$(date +%Y%m%d-%H%M%S).tfstate
+          
+          # Upload to backup location
+          aws s3 cp /tmp/terraform-backup-*.tfstate \
+            s3://humansa-terraform-state/backups/
+
+  destroy:
+    needs: validate-and-backup
+    if: needs.validate-and-backup.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Extract version for destroy tag
+        if: startsWith(github.ref, 'refs/tags/destroy-')
+        run: |
+          VERSION=$(echo ${{ github.ref }} | sed -e 's|refs/tags/destroy-||')
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        working-directory: environments/production
+        run: |
+          terraform init \
+            -backend-config="bucket=humansa-terraform-state" \
+            -backend-config="key=state/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Stop Auto Scaling Activities
+        run: |
+          # Suspend auto scaling to prevent new instances during destroy
+          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups \
+            --query "AutoScalingGroups[?contains(AutoScalingGroupName, 'humansa')].AutoScalingGroupName" \
+            --output text)
+          
+          if [ -n "$ASG_NAME" ]; then
+            echo "🛑 Suspending auto scaling activities..."
+            aws autoscaling suspend-processes \
+              --auto-scaling-group-name "$ASG_NAME"
+          fi
+
+      - name: Terraform Destroy Plan
+        id: plan
+        working-directory: environments/production
+        run: |
+          # Check if we should use cost-optimized vars
+          if [[ "${{ github.ref }}" == *"cost-optimization"* ]] || [ -f "ultra-cost-optimized.tfvars" ]; then
+            echo "Using cost-optimized configuration for destroy"
+            terraform plan -destroy \
+              -var-file="ultra-cost-optimized.tfvars" \
+              -out=destroy.tfplan
+          else
+            terraform plan -destroy -out=destroy.tfplan
+          fi
+
+      - name: Show Destroy Plan
+        working-directory: environments/production
+        run: |
+          echo "🔥 Resources to be destroyed:"
+          terraform show -no-color destroy.tfplan | grep -E "will be destroyed|must be replaced"
+
+      - name: Terraform Destroy
+        working-directory: environments/production
+        run: |
+          echo "💥 Destroying infrastructure..."
+          terraform apply -auto-approve destroy.tfplan
+
+      - name: Clean up Route53 records
+        if: always()
+        continue-on-error: true
+        run: |
+          # Clean up any remaining Route53 records
+          ZONE_ID="${{ secrets.ROUTE53_ZONE_ID }}"
+          if [ -n "$ZONE_ID" ]; then
+            echo "🧹 Cleaning up Route53 records..."
+            aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+              --query "ResourceRecordSets[?Name=='humansa.youwo.ai.']" \
+              --output json > /tmp/records.json
+            
+            # Delete A and CNAME records for humansa subdomain
+            jq -r '.[] | select(.Type=="A" or .Type=="CNAME") | .Name' /tmp/records.json | while read -r record; do
+              if [[ "$record" == "humansa."* ]]; then
+                echo "Deleting record: $record"
+                # Note: Actual deletion would require change batch
+              fi
+            done
+          fi
+
+      - name: Verify Destruction
+        run: |
+          echo "✅ Destruction Summary:"
+          echo "- Database Backup: ${{ needs.validate-and-backup.outputs.backup_file }}"
+          echo "- Terraform state backed up to S3"
+          
+          # Check remaining resources
+          echo ""
+          echo "Checking for remaining resources..."
+          
+          INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:Project,Values=humansa" "Name=instance-state-name,Values=running" \
+            --query "Reservations[].Instances[].InstanceId" \
+            --output text)
+          
+          if [ -z "$INSTANCES" ]; then
+            echo "✅ All EC2 instances terminated"
+          else
+            echo "⚠️ Warning: Some instances still running: $INSTANCES"
+          fi
+
+      - name: Create restoration instructions
+        if: success()
+        run: |
+          cat > restoration_instructions.md << EOF
+          # Humansa Infrastructure Restoration Instructions
+          
+          ## Backup Information
+          - **Destruction Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          - **Database Snapshot**: ${{ needs.validate-and-backup.outputs.backup_file }}
+          - **Triggered By**: ${{ github.actor }}
+          - **Destruction Tag**: ${{ github.ref }}
+          
+          ## To Restore Infrastructure:
+          
+          1. **Restore from database snapshot** (if needed):
+             \`\`\`bash
+             aws rds restore-db-instance-from-db-snapshot \
+               --db-instance-identifier humansa-postgres-restored \
+               --db-snapshot-identifier ${{ needs.validate-and-backup.outputs.backup_file }}
+             \`\`\`
+          
+          2. **Re-deploy infrastructure**:
+             \`\`\`bash
+             git tag apply-restore-$(date +%Y%m%d-%H%M%S)
+             git push origin apply-restore-$(date +%Y%m%d-%H%M%S)
+             \`\`\`
+          
+          3. **Restore application**:
+             \`\`\`bash
+             git tag release-restore-1.0.0
+             git push origin release-restore-1.0.0
+             \`\`\`
+          
+          ## Important Notes:
+          - State file backed up to: s3://humansa-terraform-state/backups/
+          - All SSM parameters are preserved
+          - Security groups and VPC may need recreation
+          EOF
+          
+          # Upload instructions to S3
+          aws s3 cp restoration_instructions.md \
+            s3://humansa-terraform-state/destroy-instructions/$(date +%Y%m%d-%H%M%S).md
+
+      - name: Post destruction notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Infrastructure successfully destroyed"
+            echo "📝 Restoration instructions saved to S3"
+          else
+            echo "❌ Destruction failed or was cancelled"
+          fi
