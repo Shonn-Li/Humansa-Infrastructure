@@ -135,4 +135,8 @@ jobs:
             azure_inference_credential=${{ secrets.AZURE_INFERENCE_CREDENTIAL }}
             webshare_proxy_username=${{ secrets.WEBSHARE_PROXY_USERNAME }}
             webshare_proxy_password=${{ secrets.WEBSHARE_PROXY_PASSWORD }}
-            mem0_api_key=${{ secrets.MEM0_API_KEY }}" || [ $? -eq 2 ]
+            mem0_api_key=${{ secrets.MEM0_API_KEY }}
+            serper_api_key=${{ secrets.SERPER_API_KEY }}
+            spider_api_key=${{ secrets.SPIDER_API_KEY }}
+            openai_assistant_3_id=${{ secrets.OPENAI_ASSISTANT_3_ID }}
+            openai_assistant_4_id=${{ secrets.OPENAI_ASSISTANT_4_ID }}" || [ $? -eq 2 ]

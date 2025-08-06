@@ -95,11 +95,27 @@
           {% if mem0_api_key is defined %}
           MEM0_API_KEY={{ mem0_api_key }}
           {% endif %}
+          {% if serper_api_key is defined %}
+          SERPER_API_KEY={{ serper_api_key }}
+          {% endif %}
+          {% if spider_api_key is defined %}
+          SPIDER_API_KEY={{ spider_api_key }}
+          {% endif %}
+          {% if openai_assistant_3_id is defined %}
+          OPENAI_ASSISTANT_3_ID={{ openai_assistant_3_id }}
+          {% endif %}
+          {% if openai_assistant_4_id is defined %}
+          OPENAI_ASSISTANT_4_ID={{ openai_assistant_4_id }}
+          {% endif %}
           
           # Server Configuration
           ML_SERVER_PORT=6001
           ENVIRONMENT=production
           DB_ACTIVE_DATABASE=humansa
+          DIGIT=1
+          HUMANSA_USE_SUBAGENT_ARCHITECTURE=true
+          HUMANSA_USE_WORKFLOW_ORCHESTRATOR=false
+          HUMANSA_ENHANCED_LOGGING=true
 
 # Rolling update - 1 host at a time
 - name: ROLLING UPDATE HUMANSA ML SERVER
